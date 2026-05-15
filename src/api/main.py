@@ -1,16 +1,17 @@
 import os
-from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
+from fastapi import Path as FastApiPath
+from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
 
 # Configuración de rutas
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-RUTA_CSV = os.path.join(BASE_DIR, "data", "processed", "data.csv") # direccion del csv procesado
-RUTA_MODELO = os.path.join(BASE_DIR, "models", "modelo_entrenado.pkl") # direccion del pickle del modelo entrenado
+BASE_DIR = FilePath(__file__).resolve().parent.parent.parent
+RUTA_CSV = BASE_DIR / "data" / "processed" / "data_idname.csv" # direccion del csv procesado
+RUTA_MODELO = BASE_DIR / "models" / "modelo_entrenado.pkl" # direccion del pickle del modelo entrenado
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -82,6 +83,19 @@ def health_check():
             detail={"status": "unhealthy", "checks": status_checks, "error": str(e)}
         )
 
+@app.get("/clientes/{id_cliente}")
+def get_cliente_by_id(id_cliente: int):
+    #datis de cliente
+    return {
+        "origen": "parámetro de path",
+        "Id_cliente_buscado": id_cliente,
+        "informacion": {
+            "nombre": "Ejemplo Cliente",
+            "tipo": "Premium",
+        },
+    }
+
+
 @app.get("/datos")
 def obtener_todo_el_csv(): # peta más que una escopeta de feria.
     if not os.path.exists(RUTA_CSV):
@@ -105,7 +119,55 @@ def obtener_todo_el_csv(): # peta más que una escopeta de feria.
             detail=f"Error al leer el archivo CSV: {str(e)}"
         )
 
-@app.get("/datos/ultimos")
+@app.get("/datos/{id_cliente}")
+def obtener_datos_cliente(
+    id_cliente: int = Path(
+        ..., description="El ID del cliente que quieres filtrar"
+    )
+):
+    try:
+        df = pd.read_csv(RUTA_CSV)
+        columna_id = "ID_cliente"
+
+        if columna_id not in df.columns:
+            raise HTTPException(
+                status_code=500,
+                detail=f"La columna '{columna_id}' no existe en el archivo CSV.",
+            )
+
+        df[columna_id] = pd.to_numeric(df[columna_id], errors="coerce")
+        df_filtrado = df[df[columna_id] == id_cliente]
+
+        if df_filtrado.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron registros para el ID_cliente: {id_cliente}",
+            )
+
+        df_filtrado = df_filtrado.replace({np.nan: None}) # truco maestro para que no pete el json al convertirlo, reemplazamos los NaN por None
+
+        datos = df_filtrado.to_dict(orient="records")
+
+        return {
+            "id_cliente_buscado": id_cliente,
+            "total_filas_encontradas": len(df_filtrado),
+            "columnas": list(df_filtrado.columns),
+            "datos": datos,
+        }
+
+    except HTTPException as http_ex:
+        # Volvemos a lanzar los errores 404 que ya controlamos nosotros
+        raise http_ex
+    except Exception as e:
+        # Captura cualquier otra escopeta de feria (formatos rotos, encodings, etc.)
+        raise HTTPException(
+            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
+        )
+
+
+
+
+@app.get("/datos/ultimos/")
 def obtener_ultimas_filas():
     if not os.path.exists(RUTA_CSV):
         raise HTTPException(
