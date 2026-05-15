@@ -9,8 +9,9 @@ El objetivo principal es ayudar a las empresas a identificar usuarios con alta p
 - personalización de contenido
 - optimización de campañas de marketing
 - retargeting inteligente
-- priorización de usuarios con intención de compra
-- mejora de estrategias comerciales
+- segmentación de clientes
+- automatización de acciones comerciales
+- envío de emails o push notifications
 
 La variable objetivo del modelo es:
 
@@ -27,9 +28,8 @@ donde:
 
 # Integrantes del equipo
 
-- Nombre Apellido
-- Nombre Apellido
-- Nombre Apellido
+- Dani Lavia Gaya
+- Esther Barranco Motos
 
 ---
 
@@ -56,6 +56,8 @@ procedente de:
 ```text
 UCI Machine Learning Repository
 ```
+
+URL : https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset
 
 El dataset contiene información sobre sesiones de navegación en ecommerce, incluyendo:
 
@@ -198,19 +200,27 @@ Permite crear endpoints rápidos, eficientes y documentados automáticamente.
 
 ## Pydantic
 
-Utilizado para validar los datos de entrada antes de realizar las predicciones.
+Utilizado para validar automáticamente los datos de entrada antes de realizar las predicciones.
 
 ---
 
-# Endpoints
+# Endpoints de la API
 
-## Documentación automática
-
-### Endpoint
+Una vez ejecutada la API en local, se puede acceder desde el navegador a:
 
 ```text
-GET /docs
+http://127.0.0.1:8000/
 ```
+
+La API genera automáticamente una documentación interactiva donde se pueden visualizar y probar todos los endpoints disponibles.
+
+---
+
+# Documentación interactiva
+
+## Swagger UI
+
+Permite probar todos los endpoints directamente desde el navegador.
 
 ### URL
 
@@ -222,105 +232,212 @@ http://127.0.0.1:8000/docs
 
 # OpenAPI Schema
 
-### Endpoint
+Documentación técnica generada automáticamente por FastAPI.
+
+### URL
 
 ```text
-GET /openapi.json
+http://127.0.0.1:8000/openapi.json
 ```
 
 ---
 
-# Health Check
+# Endpoint `/`
 
-Endpoint para comprobar que la API funciona correctamente.
-
-### Endpoint
+## Método
 
 ```text
-
-http://127.0.0.1:8000/helth
-
+GET /
 ```
+
+## Descripción
+
+Ruta principal de la API.
+
+Sirve para comprobar que el servicio está funcionando correctamente y mostrar información básica sobre la aplicación.
 
 ### Ejemplo de respuesta
 
 ```json
 {
-  "status": "ok"
+  "status": "API en ejecución. Prueba",
+  "documentacion": "/docs",
+  "mensaje": "Visita /docs para probar el endpoint de predicción."
 }
 ```
 
 ---
 
-# Obtener últimos datos
+# Endpoint `/health`
 
-Endpoint utilizado para consultar los últimos registros del dataset.
+## Método
 
-### Endpoint
+```text
+GET /health
+```
+
+## Descripción
+
+Endpoint de comprobación del estado del servicio.
+
+Se utiliza para verificar que la API está activa y funcionando correctamente.
+
+### Ejemplo de acceso
+
+```text
+http://127.0.0.1:8000/health
+```
+
+---
+
+# Endpoint `/datos/revenue`
+
+## Método
+
+```text
+GET /datos/revenue
+```
+
+## Descripción
+
+Filtra el dataset según el valor de la columna `Revenue`.
+
+Permite obtener únicamente los usuarios que han comprado (`true`) o los que no han comprado (`false`).
+
+Este endpoint resulta útil para segmentación de clientes y acciones de marketing.
+
+---
+
+## Parámetro query
+
+| Parámetro | Tipo | Descripción |
+|---|---|---|
+| `valor` | boolean | Valor de Revenue a filtrar (`true` o `false`) |
+
+---
+
+## Ejemplo de acceso
+
+Usuarios que han comprado:
+
+```text
+http://127.0.0.1:8000/datos/revenue?valor=true
+```
+
+Usuarios que no han comprado:
+
+```text
+http://127.0.0.1:8000/datos/revenue?valor=false
+```
+
+---
+
+# Endpoint `/datos/all`
+
+## Método
+
+```text
+GET /datos/all
+```
+
+## Descripción
+
+Devuelve todos los registros del archivo CSV cargado por la API.
+
+Permite visualizar el dataset completo desde la API REST.
+
+---
+
+## Ejemplo de acceso
+
+```text
+http://127.0.0.1:8000/datos/all
+```
+
+---
+
+# Endpoint `/datos/{id_cliente}`
+
+## Método
+
+```text
+GET /datos/{id_cliente}
+```
+
+## Descripción
+
+Endpoint con parámetro dinámico en el path.
+
+Permite obtener la información de un cliente concreto utilizando su identificador (`id_cliente`).
+
+---
+
+## Parámetro path
+
+| Parámetro | Tipo | Descripción |
+|---|---|---|
+| `id_cliente` | integer | ID del cliente que se desea consultar |
+
+---
+
+## Ejemplo de acceso
+
+```text
+http://127.0.0.1:8000/datos/1001
+```
+
+En este ejemplo:
+
+```text
+1001
+```
+
+corresponde al identificador del cliente.
+
+---
+
+# Endpoint `/datos/ultimos`
+
+## Método
 
 ```text
 GET /datos/ultimos
 ```
 
-### Ejemplo de respuesta
+## Descripción
 
-```json
-[
-  {
-    "Customer_ID": 1001,
-    "Customer_Name": "Laura Garcia",
-    "Revenue": 1
-  }
-]
-```
+Devuelve las últimas filas del dataset cargado en la API.
+
+Se utiliza para comprobar rápidamente los últimos registros disponibles sin necesidad de cargar el CSV completo.
 
 ---
 
-# Predicción de intención de compra
-
-Endpoint principal para realizar predicciones.
-
-### Endpoint
+## Ejemplo de acceso
 
 ```text
-POST /predict
+http://127.0.0.1:8000/datos/ultimos
 ```
 
 ---
 
-# Ejemplo de petición
+# Validación automática
 
-```json
-{
-  "Administrative": 0,
-  "Administrative_Duration": 0,
-  "Informational": 0,
-  "Informational_Duration": 0,
-  "ProductRelated": 20,
-  "ProductRelated_Duration": 300,
-  "BounceRates": 0.01,
-  "ExitRates": 0.03,
-  "PageValues": 25,
-  "SpecialDay": 0,
-  "Month": "May",
-  "OperatingSystems": 2,
-  "Browser": 1,
-  "Region": 1,
-  "TrafficType": 2,
-  "VisitorType": "Returning_Visitor",
-  "Weekend": false
-}
-```
+La API utiliza:
 
----
+- FastAPI
+- Pydantic
 
-# Ejemplo de respuesta
+para validar automáticamente:
 
-```json
-{
-  "prediction": 1,
-  "purchase_probability": 0.84
-}
+- tipos de datos
+- parámetros obligatorios
+- errores de entrada
+- formatos incorrectos
+
+Cuando un parámetro no es válido, FastAPI devuelve automáticamente un error:
+
+```text
+422 Validation Error
 ```
 
 ---
@@ -395,7 +512,7 @@ python src/client/client.py
 
 ---
 
-# Acceder a la documentación de FastAPI
+# Acceder a la documentación interactiva
 
 Abrir en el navegador:
 
