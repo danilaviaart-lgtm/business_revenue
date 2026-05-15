@@ -2,7 +2,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi import Path as FastApiPath
 from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
@@ -13,14 +13,56 @@ BASE_DIR = FilePath(__file__).resolve().parent.parent.parent
 RUTA_CSV = BASE_DIR / "data" / "processed" / "data_idname.csv" # direccion del csv procesado
 RUTA_MODELO = BASE_DIR / "models" / "modelo_entrenado.pkl" # direccion del pickle del modelo entrenado
 
+class PredictInput(BaseModel):
+    Administrative: int = Field(..., description="Número de páginas administrativas visitadas", example=0)
+    Administrative_Duration: float = Field(..., description="Tiempo total en páginas administrativas", example=0.0)
+    Informational: int = Field(..., description="Número de páginas informativas visitadas", example=0)
+    Informational_Duration: float = Field(..., description="Tiempo total en páginas informativas", example=0.0)
+    ProductRelated: int = Field(..., description="Número de páginas relacionadas con productos visitadas", example=1)
+    ProductRelated_Duration: float = Field(..., description="Tiempo total en páginas de productos", example=11.25)
+    BounceRates: float = Field(..., description="Porcentaje de rebote de la página", example=0.0)
+    ExitRates: float = Field(..., description="Porcentaje de salida de la página", example=0.1)
+    PageValues: float = Field(..., description="Valor medio de la página web", example=0.0)
+    SpecialDay: float = Field(..., description="Cercanía a una fecha especial o festivo (0.0 a 1.0)", example=0.0)
+    Month: str = Field(..., description="Mes de la sesión (ej: Feb, Mar, May, Nov)", example="May")
+    OperatingSystems: int = Field(..., description="ID del sistema operativo del usuario", example=2)
+    Browser: int = Field(..., description="ID del navegador utilizado", example=2)
+    Region: int = Field(..., description="ID de la región del usuario", example=1)
+    TrafficType: int = Field(..., description="ID del tipo de tráfico de origen", example=1)
+    VisitorType: str = Field(..., description="Tipo de visitante: Returning_Visitor, New_Visitor, Other", example="Returning_Visitor")
+    Weekend: bool = Field(..., description="Indica si la sesión ocurrió en fin de semana", example=True)
+'''
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "Administrative": 0,
+                "Administrative_Duration": 0.0,
+                "Informational": 0,
+                "Informational_Duration": 0.0,
+                "ProductRelated": 1,
+                "ProductRelated_Duration": 11.25,
+                "BounceRates": 0.0,
+                "ExitRates": 0.1,
+                "PageValues": 0.0,
+                "SpecialDay": 0.0,
+                "Month": "May",
+                "OperatingSystems": 2,
+                "Browser": 2,
+                "Region": 1,
+                "TrafficType": 1,
+                "VisitorType": "Returning_Visitor",
+                "Weekend": True
+            }
+        }
+    }
+'''
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
-    ml_models = {}
-    # Al arrancar el servidor. 
+    # arrancar servidor mensaje informe
     print("Cargando modelo ...")
     try:
-        ml_models["mi_modelo"] = joblib.load(RUTA_MODELO)
+        # Guardamos el modelo directamente en el state de la app
+        app.state.modelo = joblib.load(RUTA_MODELO)
         print("¡Modelo optimizado cargado con éxito!")
     except FileNotFoundError:
         print("Error: El archivo del modelo no existe.")
@@ -31,10 +73,10 @@ async def lifespan(app: FastAPI):
     
     yield  # La API se queda activa aquí
     
-    #Al apagar el server se ve mensaje de liberación de memoria, aunque en este caso no es tan crítico porque el modelo se carga una sola vez.
     print("Liberando memoria RAM...")
-    ml_models.clear()
-
+    #eliminar modelo y liberamos RAM. apagar server
+    if hasattr(app.state, "modelo"):
+        del app.state.modelo
 
 #Iniciamos app FastApi con el lifespan definido para cargar el modelo al arrancar y liberar memoria al apagar.
 app = FastAPI(
@@ -245,3 +287,42 @@ def obtener_ultimas_filas():
             detail=f"Error al procesar las últimas filas del CSV: {str(e)}"
         )
     
+
+@app.post("/predict", summary="Genera una predicción con el modelo de ML entrenado")
+def predict(request: Request, input_data: PredictInput):
+    #devolvemos el modelo cargado en el estado de la app. Si no que lance error y no acabe de arrancar.
+    try:
+        modelo = request.app.state.modelo
+    except AttributeError:
+        raise HTTPException(
+            status_code=503,
+            detail="El modelo no está disponible en el servidor. Revisa los logs de arranque."
+        )
+
+    try:
+        # 2. Convertir los datos de entrada en un DataFrame de Pandas (evita fallos de nombres de columnas)
+        # .dict() convierte el Pydantic a diccionario, y [dict] lo prepara para DataFrame
+        input_dict = input_data.model_dump()
+        df_registro = pd.DataFrame([input_dict])
+
+        # ejecutamos prediccion
+        # Si tu modelo devuelve probabilidades (ej. clasificación binaria) podrías usar modelo.predict_proba()
+        prediccion = modelo.predict(df_registro)
+
+        # convertimos a tipo nativo de Python para que FastAPI no pete con tipos de numpy
+        resultado_prediccion = prediccion[0]
+        if isinstance(resultado_prediccion, (np.integer, np.floating)):
+            resultado_prediccion = resultado_prediccion.item()
+
+        return {
+            "status": "Sin fallo en la predicción.",
+            "VisitorType": input_data.VisitorType,
+            "accion_recomendada": "Si el resultado es 1, se recomienda descuento 10%. Si es 0, no se recomienda.",
+            "prediccion": resultado_prediccion
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno durante la predicción: {str(e)}"
+        )
