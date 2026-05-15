@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     ml_models.clear()
 
 
-# 3. INICIALIZACIÓN DE FASTAPI
+#Iniciamos app FastApi con el lifespan definido para cargar el modelo al arrancar y liberar memoria al apagar.
 app = FastAPI(
     title="API de Predicciones con Pipeline de ML",
     version="1.0.0",
