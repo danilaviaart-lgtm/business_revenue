@@ -2,7 +2,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi import Path as FastApiPath
 from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
@@ -15,6 +15,7 @@ RUTA_MODELO = BASE_DIR / "models" / "modelo_entrenado.pkl" # direccion del pickl
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
     ml_models = {}
     # Al arrancar el servidor. 
     print("Cargando modelo ...")
@@ -53,12 +54,12 @@ def inicio():
 @app.get("/health")
 def health_check():
     status_checks = {
-        "api": "up",
+        "Api": "UP",
         "csv_file": "unknown"
     }
     
     if not os.path.exists(RUTA_CSV):
-        status_checks["csv_file"] = "missing"
+        status_checks["csv_file"] = "No encontrado"
         raise HTTPException(
             status_code=503, 
             detail={"status": "unhealthy", "checks": status_checks, "error": "El archivo CSV no existe"}
@@ -69,7 +70,7 @@ def health_check():
         # Usamos nrows=5 para que sea un check ultra rápido y no cargue gigas en memoria, el csv es enhorme si no se peta.
         df = pd.read_csv(RUTA_CSV, nrows=5)
         
-        status_checks["csv_file"] = "up"
+        status_checks["csv_file"] = "Archivo ok"
         return {
             "status": "healthy",
             "checks": status_checks,
@@ -83,20 +84,72 @@ def health_check():
             detail={"status": "unhealthy", "checks": status_checks, "error": str(e)}
         )
 
-@app.get("/clientes/{id_cliente}")
-def get_cliente_by_id(id_cliente: int):
-    #datis de cliente
-    return {
-        "origen": "parámetro de path",
-        "Id_cliente_buscado": id_cliente,
-        "informacion": {
-            "nombre": "Ejemplo Cliente",
-            "tipo": "Premium",
-        },
-    }
+@app.get("/datos/revenue")
+def filtrar_por_revenue(
+    valor: str = Query(
+        ...,
+        description="Valor booleano a buscar en la columna Revenue (true/false)",
+    ),
+):
+    """Filtra el archivo CSV específicamente por la columna booleana 'Revenue'."""
+
+    # 1. Verificar si el archivo existe
+    if not os.path.exists(RUTA_CSV):
+        raise HTTPException(
+            status_code=404, detail="El archivo CSV no se encontró."
+        )
+
+    try:
+        df = pd.read_csv(RUTA_CSV)
+
+        # 2. Verificar si la columna 'Revenue' existe en el CSV
+        if "Revenue" not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="La columna 'Revenue' no existe en este archivo CSV.",
+            )
+
+        # 3. Convertir el texto recibido ("true"/"false") a un booleano real de Python
+        valor_limpio = valor.strip().lower()
+        if valor_limpio in ("true", "1", "yes", "t"):
+            valor_buscado = True
+        elif valor_limpio in ("false", "0", "no", "f"):
+            valor_buscado = False
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="El valor debe ser un booleano válido: 'true' o 'false'.",
+            )
+
+        # 4. Asegurar que la columna de Pandas se evalúe como booleana y filtrar
+        # Convertimos la columna a .astype(bool) para evitar fallos si venía como texto o enteros (0/1)
+        df_filtrado = df[df["Revenue"].astype(bool) == valor_buscado]
+
+        # 5. Verificar si hay resultados
+        if df_filtrado.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron registros donde Revenue sea {valor_buscado}",
+            )
+
+        # 6. Limpiar valores Nulos/NaN para no romper el JSON y devolver la respuesta
+        df_filtrado = df_filtrado.replace({np.nan: None})
+        return {
+            "columna": "Revenue",
+            "valor_buscado": valor_buscado,
+            "total_filas": len(df_filtrado),
+            "datos": df_filtrado.to_dict(orient="records"),
+        }
+
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
+        )
 
 
-@app.get("/datos")
+@app.get("/datos/all/")
 def obtener_todo_el_csv(): # peta más que una escopeta de feria.
     if not os.path.exists(RUTA_CSV):
         raise HTTPException(
@@ -165,8 +218,6 @@ def obtener_datos_cliente(
         )
 
 
-
-
 @app.get("/datos/ultimos/")
 def obtener_ultimas_filas():
     if not os.path.exists(RUTA_CSV):
@@ -193,3 +244,4 @@ def obtener_ultimas_filas():
             status_code=500, 
             detail=f"Error al procesar las últimas filas del CSV: {str(e)}"
         )
+    
