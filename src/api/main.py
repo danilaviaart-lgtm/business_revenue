@@ -31,31 +31,7 @@ class PredictInput(BaseModel):
     TrafficType: int = Field(..., description="ID del tipo de tráfico de origen", example=1)
     VisitorType: str = Field(..., description="Tipo de visitante: Returning_Visitor, New_Visitor, Other", example="Returning_Visitor")
     Weekend: bool = Field(..., description="Indica si la sesión ocurrió en fin de semana", example=True)
-'''
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "Administrative": 0,
-                "Administrative_Duration": 0.0,
-                "Informational": 0,
-                "Informational_Duration": 0.0,
-                "ProductRelated": 1,
-                "ProductRelated_Duration": 11.25,
-                "BounceRates": 0.0,
-                "ExitRates": 0.1,
-                "PageValues": 0.0,
-                "SpecialDay": 0.0,
-                "Month": "May",
-                "OperatingSystems": 2,
-                "Browser": 2,
-                "Region": 1,
-                "TrafficType": 1,
-                "VisitorType": "Returning_Visitor",
-                "Weekend": True
-            }
-        }
-    }
-'''
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # arrancar servidor mensaje informe
