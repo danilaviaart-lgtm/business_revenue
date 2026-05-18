@@ -333,6 +333,7 @@ Por ejemplo:
 - si la probabilidad es baja → evitar impacto comercial innecesario
 - si el usuario abandona rápido → activar campaña de recuperación
 
+*Las predicciones se guardan en un archivo*
 ---
 
 ### 3.2 Validación automática
