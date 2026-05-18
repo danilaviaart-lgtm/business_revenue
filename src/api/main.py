@@ -7,7 +7,16 @@ from fastapi import Path as FastApiPath
 from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
+from sqlmodel import Field, SQLModel, Session, create_engine, select
 from .schemas import PredictInput  #con esto llamamos a schemas.py para usar los modelos de datos que definimos allí, como PredictInput para la predicción. Evitamos así tener un main.py gigante y desordenado, y mantenemos la estructura modular y limpia.
+'''
+#Conexión a base de datos
+postgres_url = "postgresql://business:esther@192.168.0.20:5432/business_revenue_db"
+# En Postgres ya no necesitas el connect_args de SQLite
+engine = create_engine(postgres_url)
+'''
+
+
 # Configuración de rutas
 BASE_DIR = FilePath(__file__).resolve().parent.parent.parent
 RUTA_CSV = BASE_DIR / "data" / "processed" / "data_idname.csv" # direccion del csv procesado
@@ -67,7 +76,6 @@ def health_check():
             status_code=503, 
             detail={"status": "unhealthy", "checks": status_checks, "error": "El archivo CSV no existe"}
         )
-        
     try:
         # 2. Intentar leer solo las primeras filas para verificar que no esté corrupto
         # Usamos nrows=5 para que sea un check ultra rápido y no cargue gigas en memoria, el csv es enhorme si no se peta.
@@ -87,32 +95,20 @@ def health_check():
             detail={"status": "unhealthy", "checks": status_checks, "error": str(e)}
         )
 
-@app.get("/datos/revenue")
+@app.get("/datos/clientes_por_revenue")
 def filtrar_por_revenue(
     valor: str = Query(
         ...,
         description="Valor booleano a buscar en la columna Revenue (true/false)",
     ),
 ):
-    """Filtra el archivo CSV específicamente por la columna booleana 'Revenue'."""
-
-    # 1. Verificar si el archivo existe
+    """Filtra el archivo CSV leyendo solo las columnas necesarias."""
     if not os.path.exists(RUTA_CSV):
         raise HTTPException(
             status_code=404, detail="El archivo CSV no se encontró."
         )
 
     try:
-        df = pd.read_csv(RUTA_CSV)
-
-        # 2. Verificar si la columna 'Revenue' existe en el CSV
-        if "Revenue" not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail="La columna 'Revenue' no existe en este archivo CSV.",
-            )
-
-        # 3. Convertir el texto recibido ("true"/"false") a un booleano real de Python
         valor_limpio = valor.strip().lower()
         if valor_limpio in ("true", "1", "yes", "t"):
             valor_buscado = True
@@ -124,18 +120,75 @@ def filtrar_por_revenue(
                 detail="El valor debe ser un booleano válido: 'true' o 'false'.",
             )
 
-        # 4. Asegurar que la columna de Pandas se evalúe como booleana y filtrar
-        # Convertimos la columna a .astype(bool) para evitar fallos si venía como texto o enteros (0/1)
+        columnas_requeridas = ["Revenue", "Nombre_cliente"]
+        
+        df = pd.read_csv(RUTA_CSV, usecols=columnas_requeridas)
+        df_filtrado = df[df["Revenue"].astype(bool) == valor_buscado]
+        df_resultado = df_filtrado[["Nombre_cliente"]]
+
+        if df_resultado.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron registros donde Revenue sea {valor_buscado}",
+            )
+
+        df_resultado = df_resultado.replace({np.nan: None})
+        return {
+            "columna_filtro": "Revenue",
+            "valor_buscado": valor_buscado,
+            "total_filas": len(df_resultado),
+            "datos": df_resultado.to_dict(orient="records"),
+        }
+
+    except HTTPException as http_ex:
+        raise http_ex
+    except ValueError as val_err:
+        raise HTTPException(
+            status_code=400, detail=f"Error en la estructura del CSV: {str(val_err)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
+        )
+
+
+@app.get("/datos/revenue")
+def filtrar_por_revenue(
+    valor: str = Query(
+        ...,
+        description="Valor booleano a buscar en la columna Revenue (true/false)",
+    ),
+):
+    if not os.path.exists(RUTA_CSV):
+        raise HTTPException(
+            status_code=404, detail="El archivo CSV no se encontró."
+        )
+
+    try:
+        df = pd.read_csv(RUTA_CSV)
+        if "Revenue" not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="La columna 'Revenue' no existe en este archivo CSV.",
+            )
+        valor_limpio = valor.strip().lower()
+        if valor_limpio in ("true", "1", "yes", "t"):
+            valor_buscado = True
+        elif valor_limpio in ("false", "0", "no", "f"):
+            valor_buscado = False
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="El valor debe ser un booleano válido: 'true' o 'false'.",
+            )
         df_filtrado = df[df["Revenue"].astype(bool) == valor_buscado]
 
-        # 5. Verificar si hay resultados
         if df_filtrado.empty:
             raise HTTPException(
                 status_code=404,
                 detail=f"No se encontraron registros donde Revenue sea {valor_buscado}",
             )
 
-        # 6. Limpiar valores Nulos/NaN para no romper el JSON y devolver la respuesta
         df_filtrado = df_filtrado.replace({np.nan: None})
         return {
             "columna": "Revenue",
@@ -150,7 +203,6 @@ def filtrar_por_revenue(
         raise HTTPException(
             status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
         )
-
 
 @app.get("/datos/all/")
 def obtener_todo_el_csv(): # peta más que una escopeta de feria.
@@ -251,34 +303,46 @@ def obtener_ultimas_filas():
 
 @app.post("/predict", summary="Genera una predicción con el modelo de ML entrenado")
 def predict(request: Request, input_data: PredictInput):
-    #devolvemos el modelo cargado en el estado de la app. Si no que lance error y no acabe de arrancar.
+    # 1. Verificación del modelo (tu código actual)
     try:
         modelo = request.app.state.modelo
     except AttributeError:
         raise HTTPException(
             status_code=503,
-            detail="El modelo no está disponible en el servidor. Revisa los logs de arranque."
+            detail="El modelo no está disponible en el servidor."
         )
 
     try:
-        # 2. Convertir los datos de entrada en un DataFrame de Pandas (evita fallos de nombres de columnas)
-        # .dict() convierte el Pydantic a diccionario, y [dict] lo prepara para DataFrame
+        # 2. Preparación de datos y predicción
         input_dict = input_data.model_dump()
         df_registro = pd.DataFrame([input_dict])
-
-        # ejecutamos prediccion
-        # Si tu modelo devuelve probabilidades (ej. clasificación binaria) podrías usar modelo.predict_proba()
+        
         prediccion = modelo.predict(df_registro)
-
-        # convertimos a tipo nativo de Python para que FastAPI no pete con tipos de numpy
         resultado_prediccion = prediccion[0]
+        
         if isinstance(resultado_prediccion, (np.integer, np.floating)):
             resultado_prediccion = resultado_prediccion.item()
 
+        #guardamos el resultado en el dataframe
+        df_registro["resultado_prediccion"] = resultado_prediccion
+        
+        nombre_archivo = "data/processed/historico_predicciones.csv"
+        
+        archivo_existe = os.path.isfile(nombre_archivo)
+        
+        # Guardamos en el CSV
+        df_registro.to_csv(
+            nombre_archivo, 
+            mode='a',
+            index=False, 
+            header=not archivo_existe, 
+            encoding='utf-8'
+        )
+        
         return {
             "status": "Sin fallo en la predicción.",
             "VisitorType": input_data.VisitorType,
-            "accion_recomendada": "Si el resultado es 1, se recomienda descuento 10%. Si es 0, no se recomienda.",
+            "accion_recomendada": "Si el resultado es 1, descuento 10%. Si es 0, no se recomienda.",
             "prediccion": resultado_prediccion
         }
 

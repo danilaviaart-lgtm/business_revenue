@@ -11,6 +11,7 @@ class PredictInput(BaseModel):
     BounceRates: float = Field(..., description="Porcentaje de rebote de la página", example=0.0)
     ExitRates: float = Field(..., description="Porcentaje de salida de la página", example=0.1)
     PageValues: float = Field(..., description="Valor medio de la página web", example=0.0)
+    Nombre_cliente: str = Field(..., description="Nombre del cliente", example="Beatriz Barreda")
     SpecialDay: float = Field(..., description="Cercanía a una fecha especial o festivo (0.0 a 1.0)", example=0.0)
     Month: str = Field(..., description="Mes de la sesión (ej: Feb, Mar, May, Nov)", example="May")
     OperatingSystems: int = Field(..., description="ID del sistema operativo del usuario", example=2)
