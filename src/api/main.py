@@ -57,14 +57,14 @@ app = FastAPI(
 
 # Principal
 @app.get("/")
-def inicio():
+def inicio(request: Request):
     return {
         "status": "API en ejecución /health para check de salud",
         "mensaje": "Este proyecto desarrolla una API REST con Machine Learning para predecir la intención de compra de usuarios en un ecommerce a partir de su comportamiento de navegación.",
-        "documentacion": "/docs",
-        "query revenue": "http://127.0.0.1:8000/datos/revenue?valor=true",
-        "query cliente": "http://127.0.0.1:8000/datos/450",
-        "Check": "http://127.0.0.1:8000/health",
+        "documentacion": str(request.base_url) + "docs",
+        "query revenue": str(request.base_url) + "datos/revenue?valor=true",
+        "query cliente": str(request.base_url) + "datos/450",
+        "Check": str(request.base_url) + "health",
     }
 
 #Ver salud del servidor

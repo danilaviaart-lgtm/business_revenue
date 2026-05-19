@@ -1,18 +1,10 @@
 version: '3.8'
 
 services:
-  postgres_db:
-    image: postgres:15-alpine # Una versión ligera y estable
-    container_name: business_revenue_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: business
-      POSTGRES_PASSWORD: esther
-      POSTGRES_DB: business_revenue_db
+  web:
+    build: .
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload --forwarded-allow-ips=*
     ports:
-      - "6432:5432"
+      - "8000:8000"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-volumes:
-  postgres_data: #
+      - .:/app
