@@ -4,18 +4,10 @@ import numpy as np
 import pandas as pd
 import pyarrow as pq
 from fastapi import FastAPI, APIRouter, HTTPException, Path, Query, Request
-from fastapi import Path as FastApiPath
 from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
-from pydantic import BaseModel, Field
-from sqlmodel import Field, SQLModel, Session, create_engine, select
 from .schemas import PredictInput  #con esto llamamos a schemas.py para usar los modelos de datos que definimos allí, como PredictInput para la predicción. Evitamos así tener un main.py gigante y desordenado, y mantenemos la estructura modular y limpia.
-'''
-#Conexión a base de datos
-postgres_url = "postgresql://business:esther@192.168.0.20:5432/business_revenue_db"
-# En Postgres ya no necesitas el connect_args de SQLite
-engine = create_engine(postgres_url)
-'''
+
 
 # Configuración de rutas
 BASE_DIR = FilePath(__file__).resolve().parent.parent.parent
