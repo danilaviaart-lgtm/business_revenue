@@ -1,2 +1,3 @@
 Administrative,Administrative_Duration,Informational,Informational_Duration,ProductRelated,ProductRelated_Duration,BounceRates,ExitRates,PageValues,Nombre_cliente,SpecialDay,Month,OperatingSystems,Browser,Region,TrafficType,VisitorType,Weekend,resultado_prediccion
 0,0.0,0,0.0,1,11.25,0.0,0.1,0.0,Beatriz Barreda,0.0,May,2,2,1,1,Returning_Visitor,True,0
+0,0.0,0,0.0,1,11.25,0.0,0.1,0.0,Beatriz Barreda,0.0,May,2,2,1,1,Returning_Visitor,True,0

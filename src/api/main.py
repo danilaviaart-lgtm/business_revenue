@@ -2,7 +2,8 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Path, Query, Request
+import pyarrow as pq
+from fastapi import FastAPI, APIRouter, HTTPException, Path, Query, Request
 from fastapi import Path as FastApiPath
 from pathlib import Path as FilePath
 from contextlib import asynccontextmanager
@@ -16,19 +17,20 @@ postgres_url = "postgresql://business:esther@192.168.0.20:5432/business_revenue_
 engine = create_engine(postgres_url)
 '''
 
-
 # Configuración de rutas
 BASE_DIR = FilePath(__file__).resolve().parent.parent.parent
 RUTA_CSV = BASE_DIR / "data" / "processed" / "data_idname.csv" # direccion del csv procesado
 RUTA_MODELO = BASE_DIR / "models" / "modelo_entrenado.pkl" # direccion del pickle del modelo entrenado
-
+RUTA_PARQUET = BASE_DIR / "data" / "processed" / "data_idname.parquet"
+# Por si pasamos por rutas relativas
+router = APIRouter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # arrancar servidor mensaje informe
     print("Cargando modelo ...")
     try:
-        # Guardamos el modelo directamente en el state de la app
+        # Guardamos el modelo directamente en el state de la app para que no se recargue siempre
         app.state.modelo = joblib.load(RUTA_MODELO)
         print("¡Modelo optimizado cargado con éxito!")
         modelocargado = True
@@ -53,78 +55,82 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Principal
 @app.get("/")
 def inicio():
     return {
         "status": "API en ejecución /health para check de salud",
+        "mensaje": "Este proyecto desarrolla una API REST con Machine Learning para predecir la intención de compra de usuarios en un ecommerce a partir de su comportamiento de navegación.",
         "documentacion": "/docs",
         "query revenue": "http://127.0.0.1:8000/datos/revenue?valor=true",
         "query cliente": "http://127.0.0.1:8000/datos/450",
         "Check": "http://127.0.0.1:8000/health",
     }
 
+#Ver salud del servidor
 @app.get("/health")
 def health_check():
     status_checks = {
         "Api": "UP",
-        "csv_file": "unknown"
+        "parquet_file": "unknown"
     }
     
-    if not os.path.exists(RUTA_CSV):
-        status_checks["csv_file"] = "No encontrado"
+    if not os.path.exists(RUTA_PARQUET):
+        status_checks["parquet_file"] = "No encontrado"
         raise HTTPException(
             status_code=503, 
-            detail={"status": "unhealthy", "checks": status_checks, "error": "El archivo CSV no existe"}
+            detail={"status": "unhealthy", "checks": status_checks, "error": "El archivo Parquet no existe"}
         )
     try:
-        # 2. Intentar leer solo las primeras filas para verificar que no esté corrupto
-        # Usamos nrows=5 para que sea un check ultra rápido y no cargue gigas en memoria, el csv es enhorme si no se peta.
-        df = pd.read_csv(RUTA_CSV, nrows=5)
+        import pyarrow.parquet as pq
         
-        status_checks["csv_file"] = "Archivo ok"
+        pq.read_metadata(RUTA_PARQUET)
+        
+        status_checks["parquet_file"] = "Archivo ok"
         return {
             "status": "healthy",
             "checks": status_checks,
-            }
+        }
         
     except Exception as e:
-        # Si el CSV está corrupto o mal formateado
-        status_checks["csv_file"] = "corrupted o unreadable"
+        status_checks["parquet_file"] = "corrupted o unreadable"
         raise HTTPException(
             status_code=503, 
             detail={"status": "unhealthy", "checks": status_checks, "error": str(e)}
         )
 
-@app.get("/datos/clientes_por_revenue")
+# Endpoint para filtrar por Revenue
+@app.get("/datos/revenue")
 def filtrar_por_revenue(
     valor: str = Query(
         ...,
         description="Valor booleano a buscar en la columna Revenue (true/false)",
     ),
 ):
-    """Filtra el archivo CSV leyendo solo las columnas necesarias."""
-    if not os.path.exists(RUTA_CSV):
+    if not os.path.exists(RUTA_PARQUET):
         raise HTTPException(
-            status_code=404, detail="El archivo CSV no se encontró."
+            status_code=404, detail="El archivo Parquet no se encontró."
         )
 
+    # 1. Normalización y validación del input del usuario
+    valor_limpio = valor.strip().lower()
+    if valor_limpio in ("true", "1", "yes", "t"):
+        valor_buscado = True
+    elif valor_limpio in ("false", "0", "no", "f"):
+        valor_buscado = False
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="El valor debe ser un booleano válido (e.g., 'true' o 'false').",
+        )
     try:
-        valor_limpio = valor.strip().lower()
-        if valor_limpio in ("true", "1", "yes", "t"):
-            valor_buscado = True
-        elif valor_limpio in ("false", "0", "no", "f"):
-            valor_buscado = False
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="El valor debe ser un booleano válido: 'true' o 'false'.",
-            )
-
         columnas_requeridas = ["Revenue", "Nombre_cliente"]
         
-        df = pd.read_csv(RUTA_CSV, usecols=columnas_requeridas)
-        df_filtrado = df[df["Revenue"].astype(bool) == valor_buscado]
-        df_resultado = df_filtrado[["Nombre_cliente"]]
+        df_resultado = pd.read_parquet(
+            RUTA_PARQUET,
+            columns=columnas_requeridas,
+            filters=[("Revenue", "==", valor_buscado)]
+        )
 
         if df_resultado.empty:
             raise HTTPException(
@@ -132,7 +138,9 @@ def filtrar_por_revenue(
                 detail=f"No se encontraron registros donde Revenue sea {valor_buscado}",
             )
 
-        df_resultado = df_resultado.replace({np.nan: None})
+        # 4. Limpieza de NaN a None (para JSON válido) y selección de la columna final
+        df_resultado = df_resultado[["Nombre_cliente"]].replace({np.nan: None})
+        
         return {
             "columna_filtro": "Revenue",
             "valor_buscado": valor_buscado,
@@ -144,107 +152,72 @@ def filtrar_por_revenue(
         raise http_ex
     except ValueError as val_err:
         raise HTTPException(
-            status_code=400, detail=f"Error en la estructura del CSV: {str(val_err)}"
+            status_code=400, detail=f"Error en la estructura del archivo Parquet: {str(val_err)}"
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
+            status_code=500, detail=f"Error al procesar el archivo Parquet: {str(e)}"
         )
 
-
-@app.get("/datos/revenue")
-def filtrar_por_revenue(
-    valor: str = Query(
-        ...,
-        description="Valor booleano a buscar en la columna Revenue (true/false)",
-    ),
-):
-    if not os.path.exists(RUTA_CSV):
-        raise HTTPException(
-            status_code=404, detail="El archivo CSV no se encontró."
-        )
-
-    try:
-        df = pd.read_csv(RUTA_CSV)
-        if "Revenue" not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail="La columna 'Revenue' no existe en este archivo CSV.",
-            )
-        valor_limpio = valor.strip().lower()
-        if valor_limpio in ("true", "1", "yes", "t"):
-            valor_buscado = True
-        elif valor_limpio in ("false", "0", "no", "f"):
-            valor_buscado = False
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="El valor debe ser un booleano válido: 'true' o 'false'.",
-            )
-        df_filtrado = df[df["Revenue"].astype(bool) == valor_buscado]
-
-        if df_filtrado.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No se encontraron registros donde Revenue sea {valor_buscado}",
-            )
-
-        df_filtrado = df_filtrado.replace({np.nan: None})
-        return {
-            "columna": "Revenue",
-            "valor_buscado": valor_buscado,
-            "total_filas": len(df_filtrado),
-            "datos": df_filtrado.to_dict(orient="records"),
-        }
-
-    except HTTPException as http_ex:
-        raise http_ex
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
-        )
-
+# Visionar todos los datos del parquet con paginación (limit y offset)
 @app.get("/datos/all/")
-def obtener_todo_el_csv(): # peta más que una escopeta de feria.
-    if not os.path.exists(RUTA_CSV):
+def obtener_todo_el_parquet(
+    limit: int = Query(100, ge=1, le=1000, description="Número de filas a retornar"),
+    offset: int = Query(0, ge=0, description="Número de filas a saltar")
+):
+    if not os.path.exists(RUTA_PARQUET):
         raise HTTPException(
             status_code=404, 
-            detail=f"El archivo CSV no se encontró en la ruta: {RUTA_CSV}"
+            detail=f"El archivo Parquet no se encontró en la ruta: {RUTA_PARQUET}"
         )
     try:
-        df = pd.read_csv(RUTA_CSV)
-        df = df.replace({np.nan: None}) # para que no pete el json al convertirlo, reemplazamos los NaN por None
-        datos = df.to_dict(orient="records") 
+        import pyarrow.parquet as pq
+        
+        archivo_parquet = pq.ParquetFile(RUTA_PARQUET)
+        total_filas = archivo_parquet.metadata.num_rows
+        columnas = archivo_parquet.metadata.schema.names
+
+        if offset >= total_filas:
+            return {
+                "total_filas": total_filas,
+                "columnas": columnas,
+                "datos": []
+            }
+
+        df = pd.read_parquet(RUTA_PARQUET)
+        df_paginado = df.iloc[offset : offset + limit]
+        df_paginado = df_paginado.replace({np.nan: None})
         
         return {
-            "total_filas": len(df),
-            "columnas": list(df.columns),
-            "datos": datos
+            "total_filas": total_filas,
+            "columnas": columnas,
+            "limite_pagina": limit,
+            "desplazamiento": offset,
+            "datos": df_paginado.to_dict(orient="records")
         }
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error al leer el archivo CSV: {str(e)}"
+            detail=f"Error al leer el archivo Parquet: {str(e)}"
         )
-
+#busqueda por ID cliente
 @app.get("/datos/{id_cliente}")
 def obtener_datos_cliente(
-    id_cliente: int = Path(
-        ..., description="El ID del cliente que quieres filtrar"
-    )
+    id_cliente: int = Path(..., description="El ID del cliente que quieres filtrar")
 ):
+    if not os.path.exists(RUTA_PARQUET):
+        raise HTTPException(
+            status_code=404, 
+            detail=f"El archivo Parquet no se encontró."
+        )
     try:
-        df = pd.read_csv(RUTA_CSV)
         columna_id = "ID_cliente"
 
-        if columna_id not in df.columns:
-            raise HTTPException(
-                status_code=500,
-                detail=f"La columna '{columna_id}' no existe en el archivo CSV.",
-            )
-
-        df[columna_id] = pd.to_numeric(df[columna_id], errors="coerce")
-        df_filtrado = df[df[columna_id] == id_cliente]
+        # Leemos aplicando el filtro directamente sobre los bytes del archivo Parquet
+        df_filtrado = pd.read_parquet(
+            RUTA_PARQUET,
+            filters=[(columna_id, "==", id_cliente)]
+        )
 
         if df_filtrado.empty:
             raise HTTPException(
@@ -252,8 +225,7 @@ def obtener_datos_cliente(
                 detail=f"No se encontraron registros para el ID_cliente: {id_cliente}",
             )
 
-        df_filtrado = df_filtrado.replace({np.nan: None}) # truco maestro para que no pete el json al convertirlo, reemplazamos los NaN por None
-
+        df_filtrado = df_filtrado.replace({np.nan: None})
         datos = df_filtrado.to_dict(orient="records")
 
         return {
@@ -264,46 +236,58 @@ def obtener_datos_cliente(
         }
 
     except HTTPException as http_ex:
-        # Volvemos a lanzar los errores 404 que ya controlamos nosotros
         raise http_ex
-    except Exception as e:
-        # Captura cualquier otra escopeta de feria (formatos rotos, encodings, etc.)
+    except ValueError as val_err:
         raise HTTPException(
-            status_code=500, detail=f"Error al procesar el CSV: {str(e)}"
+            status_code=400, 
+            detail=f"La columna '{columna_id}' no existe o tiene un tipo incompatible en el archivo Parquet."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al procesar el archivo Parquet: {str(e)}"
         )
 
-
+#Últimos 5 valores del parquet
 @app.get("/datos/ultimos/")
 def obtener_ultimas_filas():
-    if not os.path.exists(RUTA_CSV):
+    if not os.path.exists(RUTA_PARQUET):
         raise HTTPException(
             status_code=404, 
-            detail=f"El archivo CSV no se encontró en la ruta: {RUTA_CSV}"
+            detail=f"El archivo Parquet no se encontró en la ruta: {RUTA_PARQUET}"
         )
     try:
-        df = pd.read_csv(RUTA_CSV)
-        df_ultimos = df.tail(5)
-        df_ultimos = df_ultimos.replace({np.nan: None}) # para que no pete el json al convertirlo, reemplazamos los NaN por None
+        import pyarrow.parquet as pq
+        
+        archivo_parquet = pq.ParquetFile(RUTA_PARQUET)
+        total_filas = archivo_parquet.metadata.num_rows
+        columnas = archivo_parquet.metadata.schema.names
+
+        filas_a_mostrar = 5
+        offset = max(0, total_filas - filas_a_mostrar)
+
+        df = pd.read_parquet(RUTA_PARQUET)
+        df_ultimos = df.iloc[offset:]
+        df_ultimos = df_ultimos.replace({np.nan: None})
         
         datos = df_ultimos.to_dict(orient="records")
         
         return {
             "total_filas_mostradas": len(df_ultimos),
-            "total_filas_totales_csv": len(df),
-            "columnas": list(df.columns),
+            "total_filas_totales_parquet": total_filas,
+            "columnas": columnas,
             "datos": datos
         }
         
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error al procesar las últimas filas del CSV: {str(e)}"
+            detail=f"Error al procesar las últimas filas del Parquet: {str(e)}"
         )
-    
 
+# Predecircion con el modelo de ML entrenado
 @app.post("/predict", summary="Genera una predicción con el modelo de ML entrenado")
 def predict(request: Request, input_data: PredictInput):
-    # 1. Verificación del modelo (tu código actual)
     try:
         modelo = request.app.state.modelo
     except AttributeError:
@@ -313,7 +297,6 @@ def predict(request: Request, input_data: PredictInput):
         )
 
     try:
-        # 2. Preparación de datos y predicción
         input_dict = input_data.model_dump()
         df_registro = pd.DataFrame([input_dict])
         
