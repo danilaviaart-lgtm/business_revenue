@@ -232,7 +232,7 @@ def obtener_datos_cliente(
     except ValueError as val_err:
         raise HTTPException(
             status_code=400, 
-            detail=f"La columna '{columna_id}' no existe o tiene un tipo incompatible en el archivo Parquet."
+            detail=f"La columna no existe o tiene un tipo incompatible en el archivo Parquet."
         )
     except Exception as e:
         raise HTTPException(
